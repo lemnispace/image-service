@@ -3,48 +3,97 @@ Transform: AWS::Serverless-2016-10-31
 Description: >
   image-service
 
-  Sample SAM Template for image-service
+  SAM Template for image-service
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 5
-    MemorySize: 128
+    Timeout: 30
+    MemorySize: 512
+
+Parameters:
+  StageName:
+    Type: String
+    Default: Dev
+    AllowedValues:
+      - Prod
+      - Staging
+      - Dev
 
     # You can add LoggingConfig parameters such as the Logformat, Log Group, and SystemLogLevel or ApplicationLogLevel. Learn more here https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html#sam-function-loggingconfig.
     LoggingConfig:
       LogFormat: JSON
 Resources:
-  HelloWorldFunction:
+  ImageS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  ImageServiceFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Metadata:
       BuildMethod: go1.x
     Properties:
-      CodeUri: hello-world/
+      CodeUri: cmd/server/
       Handler: bootstrap
       Runtime: provided.al2023
       Architectures:
       - x86_64
       Events:
         CatchAll:
-          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Type: HttpApi # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
           Properties:
-            Path: /hello
-            Method: GET
+            Path: /images/{proxy+}
+            Method: ANY
+            ApiId: !Ref ImagesHttpApi
       Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
         Variables:
           PARAM1: VALUE
+  # Image database postgresql RDS
+  ImageDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub ${AWS::StackName}-image-db
+      DBName: !Sub ${AWS::StackName}-image-db
+      Engine: postgres
+      EngineVersion: 12.5
+      DBInstanceClass: db.t2.micro
+      AllocatedStorage: 20
+      MasterUsername: !Ref ImageDatabaseUsername
+      MasterUserPassword: !Ref ImageDatabasePassword
+      PubliclyAccessible: true
+      VPCSecurityGroups:
+        - !Ref ImageDatabaseSecurityGroup
+      DBSubnetGroupName: !Ref ImageDatabaseSubnetGroup
+      DeletionProtection: true
+      BackupRetentionPeriod: 0
+      StorageEncrypted: true
+      MultiAZ: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-image-db
+
+  ImagesHttpApi:
+    type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      StageVariables:
+        Stage: !Ref StageName
+      
 
 Outputs:
   # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
   # Find out more about other implicit resources you can reference within SAM
   # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
-  HelloWorldAPI:
+  ImagesAPI:
     Description: API Gateway endpoint URL for Prod environment for First Function
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
-  HelloWorldFunction:
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/images/"
+  ImageServiceFunction:
     Description: First Lambda Function ARN
-    Value: !GetAtt HelloWorldFunction.Arn
-  HelloWorldFunctionIamRole:
+    Value: !GetAtt ImageServiceFunction.Arn
+  ImageServiceFunctionIamRole:
     Description: Implicit IAM Role created for Hello World function
-    Value: !GetAtt HelloWorldFunctionRole.Arn
+    Value: !GetAtt ImageServiceFunctionRole.Arn
